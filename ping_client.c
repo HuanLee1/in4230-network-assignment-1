@@ -6,6 +6,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include "common.h"
+
 /*--------------------------------------------------------------------*/
 /* Method that creates socket and connects it to server UNIX_socket. */
 /*------------------------------------------------------------------*/
@@ -40,10 +42,18 @@ static int connect_to_mipd(const char *socket_path){
 
 int main(int argc, char *argv[]){
     int sd;
-    
-    /*Input check before connecting client to MIPD UNIX socket.*/
-    if(argc < 2){
-        fprintf(stderr, "Usage: %s <socket_path>\n", argv[0]);
+    struct mip_app_msg msg;
+
+    /*Input handling: 
+    * Input has to have 4 argument counts before it's valid:
+    *   - ./ping_client -> argc 1
+    *   - socket_path -> argc 2
+    *   - destination mip -> argc 3
+    *   - message -> argc 4
+    * Else it'll print out standard error and how to use ping_client.
+    */
+    if(argc < 4){
+        fprintf(stderr, "Usage: %s <socket_path> <destination_mip> <message>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -52,16 +62,24 @@ int main(int argc, char *argv[]){
     if(sd == -1){
         return EXIT_FAILURE;
     }
-
     printf("Connected to mipd\n");
 
-    const char *message = "Hello";
-
-    if(send(sd, message, strlen(message) +1, 0) == -1){
+    /*Temporary test to verify if UNIX socket can communicate with MIPD. */
+    /*Adding msg.dst_mip as argv[2]. Converting text string to integer using atoi. */
+    msg.dst_mip = (unsigned char)atoi(argv[2]);
+    
+    /*Adding the message on argv[3] into msg. */
+    strncpy(msg.message, argv[3], sizeof(msg.message) -1);
+    msg.message[sizeof(msg.message) -1] = '\0';
+    
+    /*send destination MIP - message to local MIPD over UNIX socket.*/
+    if(send(sd, &msg, sizeof(msg), 0) == -1){
         perror("send");
         close(sd);
         return EXIT_FAILURE;
     }
+
+    printf("Sent message to MIP %u: %s\n", msg.dst_mip, msg.message);
 
     
 

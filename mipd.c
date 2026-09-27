@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <sys/socket.h>
+#include <sys/epoll.h>
 #include <sys/un.h>
 
 #include "common.h"
@@ -72,6 +73,8 @@ static int prepare_server_sock(const char *socket_path){
 int main(int argc, char *argv[]){
     int server_sd;
     int client_sd;
+    int epoll_fd;
+    struct mip_app_msg msg;
 
     /*Input check before MIPD start. 
     * Example:
@@ -91,6 +94,32 @@ int main(int argc, char *argv[]){
     /* Server is now listening for a local application connection. */
     printf("mipd listening on UNIX socket: %s\n", argv[1]);
     
+
+    /*Epoll setup.*/
+    epoll_fd = epollcreate1(0);
+    if(epoll_fd == -1){
+        perror("epollcreate1");
+        close(server_sd);
+        unlink(argv[1]);
+        return EXIT_FAILURE;
+    }
+
+    struct epoll_event event;
+    memset(&event, 0, sizeof(event));
+
+    event.events = EPOLLIN;
+    event.data.fd = server_sd;
+
+    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_sd, &event) == -1){
+        perror("epoll_ctl");
+        close(epoll_fd);
+        close(server_sd);
+        unlink(argv[1]);
+        return EXIT_FAILURE;
+    }
+
+    epoll_wait();
+
     /* Wait for and accept one client connection (temporary). */
     client_sd = accept(server_sd, NULL, NULL);
     if(client_sd == -1){
@@ -102,8 +131,8 @@ int main(int argc, char *argv[]){
 
     printf("Client connected to MIPD\n");
 
-    char buffer[256];
-    ssize_t bytes = recv(client_sd, buffer, sizeof(buffer), 0);
+    /*Temporary test to verify that MIPD can receive data from a connected UNIX SOCKET client.*/
+    ssize_t bytes = recv(client_sd, &msg, sizeof(msg), 0);
     if(bytes == -1){
         perror("recv");
         close(client_sd);
@@ -112,7 +141,8 @@ int main(int argc, char *argv[]){
         return EXIT_FAILURE;
     }
 
-    printf("Received from Client: %s\n", buffer);
+    printf("Destination MIP: %u\n", msg.dst_mip);
+    printf("Message: %s\n", msg.message);
 
     close(client_sd);
     close(server_sd);

@@ -11,5 +11,12 @@
 #define MAX_EVENTS 10
 #define MAX_CONNS 5
 
+
+/* Represents a message sent over the UNIX socket. */
+struct mip_app_msg {
+    unsigned char dst_mip;
+    char message[256];
+};
+
 /*End of guard*/
 #endif
