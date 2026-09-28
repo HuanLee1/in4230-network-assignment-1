@@ -11,6 +11,8 @@
 #define MAX_EVENTS 10
 #define MAX_CONNS 5
 #define MAX_IFACES 10
+#define ETH_P_MIP 0x88B5
+#define MIP_HDR_LEN 4
 
 #include <linux/if_packet.h>
 #include <stdint.h>
@@ -39,6 +41,16 @@ struct ether_frame{
     uint8_t contents[0];
 }__attribute__((packed));
 
+struct mip_packet {
+    uint8_t src;
+    uint8_t dst;
+    uint8_t type;
+    uint8_t ttl;
+
+    uint8_t *sdu;
+    size_t sdu_len;
+}
+
 /*Discover Discover available Ethernet interfaces and their link-layer addresses. */
 void get_mac_from_interfaces(struct ifs_data *ifs);
 
@@ -53,6 +65,8 @@ int send_raw_packet(int sd, struct sockaddr_ll *so_name, uint8_t *dst_addr, uint
 
 /*Receives Ethernet frame and seperates its header from the payload so MIPD can inspect and process the packet further.*/
 int recv_raw_packet(int sd, struct sockaddr_ll *so_name, struct ether_frame *frame_hdr, uint8_t *buf, size_t len);
+
+size_t build_mip_header(uint8_t *buf, uint8_t src, uint8_t dst);
 
 /*End of guard*/
 #endif

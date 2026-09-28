@@ -4,11 +4,12 @@
 #include <ifaddrs.h>
 #include <net/ethernet.h>
 
-
 #include "common.h"
 
-
+/*-----------------------------------------------------------------------------------------------------*/
 /*Get all usable network interfaces so MIPD knows which MAC addresses and interfaces it can send from.*/
+/*---------------------------------------------------------------------------------------------------*/
+
 void get_mac_from_interfaces(struct ifs_data *ifs){
     struct ifaddrs *ifaces;
     struct ifaddrs *ifp;
@@ -41,7 +42,9 @@ void get_mac_from_interfaces(struct ifs_data *ifs){
     freeifaddrs(ifaces);
 };
 
+/*---------------------------------------------------------------------------------------*/
 /* Initialize the interface structure and associate it with the raw socket used by MIPD.*/
+/*-------------------------------------------------------------------------------------*/
 void init_ifs(struct ifs_data *ifs, int raw_sock){
     get_mac_from_interfaces(ifs);
     ifs->rsock = raw_sock;
@@ -109,6 +112,9 @@ int send_raw_packet(int sd, struct sockaddr_ll *so_name, uint8_t *dst_addr, uint
     return rc;
 };
 
+/*-------------------------------------------------------------------------------------------*/
+/*Receive Ethernet frame from raw socket and seperate the Ethernet header from the payload. */
+/*-----------------------------------------------------------------------------------------*/
 int recv_raw_packet(int sd, struct sockaddr_ll *so_name, struct ether_frame *frame_hdr, uint8_t *buf, size_t len){
     struct msghdr msg = {0};
     struct iovec msgvec[2];
@@ -144,4 +150,11 @@ int recv_raw_packet(int sd, struct sockaddr_ll *so_name, struct ether_frame *fra
 
     /*Return number of bytes received.*/
     return rc;
+};
+
+/*--------------------------------------------------------------------------------------*/
+/*Build the MIOP header taht will be placed before the SDU inside the Ethernet payload.*/
+/*------------------------------------------------------------------------------------*/
+size_t build_mip_header(uint8_t *buf, uint8_t src, uint8_t dst){
+
 };
