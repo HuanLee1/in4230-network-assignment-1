@@ -33,7 +33,7 @@ struct mip_app_msg {
     unsigned char dst_mip;
     char message[256];
 };
-
+ 
 /* Stores ethernet itnerface information discovered by MIPD. 
 * addr[] contains sockaddr_ll enmtries with MAC address and ifindex.
 */
@@ -48,7 +48,7 @@ struct ether_frame{
     uint8_t dst_addr[6];
     uint8_t src_addr[6];
     uint8_t eth_proto[2];
-    uint8_t contents[0];
+    uint8_t contents[];
 }__attribute__((packed));
 
 /*MIP header fields used internally before/after serialization.*/
@@ -76,6 +76,12 @@ struct mip_arp_cache {
     struct mip_arp_entry entries[MIP_ARP_CACHE_SIZE];
 };
 
+struct pending_msg{
+    int valid;
+    struct mip_app_msg msg;
+};
+
+
 
 /*Discover Discover available Ethernet interfaces and their link-layer addresses. */
 void get_mac_from_interfaces(struct ifs_data *ifs);
@@ -87,10 +93,10 @@ void init_ifs(struct ifs_data *ifs, int raw_sock);
 void print_mac_addr(unsigned char *mac);
 
 /*Builds and sends an Ethernet frame containing the supplied payload through selected interface.*/
-int send_raw_packet(int sd, struct sockaddr_ll *so_name, uint8_t *dst_addr, uint8_t *buf, size_t len);
+int send_raw_packet(int sd, struct sockaddr_ll *so_name, const uint8_t *dst_addr, uint8_t *buf, size_t len);
 
 /*Receives Ethernet frame and seperates its header from the payload so MIPD can inspect and process the packet further.*/
-int recv_raw_packet(int sd, struct sockaddr_ll *so_name, struct ether_frame *frame_hdr, uint8_t *buf, size_t len);
+int recv_raw_packet(int sd, uint8_t *buf, size_t len, struct sockaddr_ll *src_addr);
 
 /*Pack the MIP header fields into a 32-bit header. */
 uint32_t mip_serialize_header(const struct mip_hdr *hdr);
@@ -129,6 +135,10 @@ int send_mip_arp_response(struct ifs_data *ifs, int ifindex, const uint8_t *dst_
 int handle_mip_arp(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len, const uint8_t *src_mac, int ifindex);
 
 struct mip_arp_entry *resolve_mip(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, uint8_t dst_mip);
+
+int send_ping_via_entry(struct ifs_data *ifs, int raw_sock, uint8_t local_mip, const struct mip_app_msg *msg, const struct mip_arp_entry *entry);
+
+uint8_t *get_payload_from_frame(uint8_t *buf);
 
 /*End of guard*/
 #endif

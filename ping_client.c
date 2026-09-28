@@ -37,7 +37,7 @@ static int connect_to_mipd(const char *socket_path){
     }
 
     return sd;
-};
+}
 
 
 int main(int argc, char *argv[]){
@@ -86,4 +86,4 @@ int main(int argc, char *argv[]){
     close(sd);
 
     return EXIT_SUCCESS;
-};
+}
