@@ -18,6 +18,12 @@
 #define MIP_TYPE_PING 0x02
 #define MIP_BROADCAST 0xFF
 
+#define MIP_ARP_REQUEST  0
+#define MIP_ARP_RESPONSE 1
+#define MIP_ARP_CACHE_SIZE 256
+
+#define ETH_BROADCAST {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+
 #include <linux/if_packet.h>
 #include <stdint.h>
 
@@ -54,6 +60,23 @@ struct mip_hdr {
     uint8_t sdu_type;
 };
 
+struct mip_arp_msg{
+    uint8_t type;
+    uint8_t address;
+};
+
+struct mip_arp_entry {
+    uint8_t mip_addr;
+    uint8_t mac_addr[6];
+    int ifindex;
+    int valid;
+};
+
+struct mip_arp_cache {
+    struct mip_arp_entry entries[MIP_ARP_CACHE_SIZE];
+};
+
+
 /*Discover Discover available Ethernet interfaces and their link-layer addresses. */
 void get_mac_from_interfaces(struct ifs_data *ifs);
 
@@ -70,7 +93,7 @@ int send_raw_packet(int sd, struct sockaddr_ll *so_name, uint8_t *dst_addr, uint
 int recv_raw_packet(int sd, struct sockaddr_ll *so_name, struct ether_frame *frame_hdr, uint8_t *buf, size_t len);
 
 /*Pack the MIP header fields into a 32-bit header. */
-uint32_t mip_seralize_header(const struct mip_hdr *hdr);
+uint32_t mip_serialize_header(const struct mip_hdr *hdr);
 
 /*Unpack a 32-bit MIP header into it's seperate fields.*/
 void mip_parse_header(uint32_t raw_header, struct mip_hdr *hdr);
@@ -86,6 +109,26 @@ uint16_t mip_sdu_words(size_t padded_len);
 
 /*Parse a MIP PDU and retrive its header and sdu. */
 int mip_parse_pdu(uint8_t *buf, size_t buf_len, struct mip_hdr *hdr, uint8_t **sdu, size_t *sdu_len);
+
+void mip_arp_cache_init(struct mip_arp_cache *cache);
+
+struct mip_arp_entry *mip_arp_lookup(struct mip_arp_cache *cache, uint8_t mip_addr);
+
+void mip_arp_update(struct mip_arp_cache *cache, uint8_t mip_addr, const uint8_t *mac_addr, int ifindex);
+
+uint32_t mip_arp_serialize(const struct mip_arp_msg *msg);
+
+void mip_arp_parse(uint32_t raw_arp, struct mip_arp_msg *msg);
+
+int send_mip_arp_request(struct ifs_data *ifs, uint8_t local_mip, uint8_t target_mip);
+
+int handle_mip_arp_request(uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len);
+
+int send_mip_arp_response(struct ifs_data *ifs, int ifindex, const uint8_t *dst_mac, uint8_t local_mip, uint8_t requester_mip);
+
+int handle_mip_arp(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len, const uint8_t *src_mac, int ifindex);
+
+struct mip_arp_entry *resolve_mip(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, uint8_t dst_mip);
 
 /*End of guard*/
 #endif

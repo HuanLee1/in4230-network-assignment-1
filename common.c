@@ -157,7 +157,7 @@ int recv_raw_packet(int sd, struct sockaddr_ll *so_name, struct ether_frame *fra
 /* Put all the MIP header fields together into one 32-bit header format,
 * so it can be sent over the network.
 ---------------------------------------------------------------------*/
-uint32_t mip_seralize_header(const struct mip_hdr *hdr){
+uint32_t mip_serialize_header(const struct mip_hdr *hdr){
     uint32_t header = 0;
 
     header |= ((uint32_t)hdr->dst) << 24; 
@@ -182,7 +182,7 @@ void mip_parse_header(uint32_t raw_header, struct mip_hdr *hdr){
 };
 
 /*-----------------------------------------------------------------------*/
-/*Builds a MIP PDU by seralizing the header and appending the padded SDU. 
+/*Builds a MIP PDU by serializing the header and appending the padded SDU. 
 * The finished PDU can be passed to the Ethernet layer for sending.
 ----------------------------------------------------------------------*/
 size_t mip_build_pdu(struct mip_hdr *hdr, const uint8_t *sdu, size_t sdu_len, uint8_t *buf, size_t buf_len){
@@ -204,7 +204,7 @@ size_t mip_build_pdu(struct mip_hdr *hdr, const uint8_t *sdu, size_t sdu_len, ui
     hdr->sdu_len = mip_sdu_words(padded_len);
 
     /*Pack the MIP header fields into the 32-bit formated used by on the network.*/
-    raw_header = mip_seralize_header(hdr);
+    raw_header = mip_serialize_header(hdr);
     
     /*Copy header into buffer.*/
     memcpy(buf, &raw_header, sizeof(raw_header));
@@ -273,3 +273,201 @@ int mip_parse_pdu(uint8_t *buf, size_t buf_len, struct mip_hdr *hdr, uint8_t **s
 
     return 0;
 };
+
+
+void mip_arp_cache_init(struct mip_arp_cache *cache){
+    memset(cache, 0, sizeof(*cache));
+};
+
+struct mip_arp_entry *mip_arp_lookup(struct mip_arp_cache *cache, uint8_t mip_addr){
+    struct mip_arp_entry *entry;
+
+    entry = &cache->entries[mip_addr];
+
+    if(!entry->valid){
+        return NULL;
+    }
+
+    return entry;
+};
+
+void mip_arp_update(struct mip_arp_cache *cache, uint8_t mip_addr, const uint8_t *mac_addr, int ifindex){
+    struct mip_arp_entry * entry;
+
+    entry = &cache->entries[mip_addr];
+
+    entry->mip_addr = mip_addr;
+    memcpy(entry->mac_addr, mac_addr, 6);
+    entry->ifindex = ifindex;
+    entry->valid = 1;
+};
+
+
+uint32_t mip_arp_serialize(const struct mip_arp_msg *msg){
+    uint32_t arp = 0;
+
+    arp |= ((uint32_t)(msg->type & 0x01)) << 31;
+    arp |= ((uint32_t)msg->address) << 23;
+
+    return htonl(arp);
+};
+
+
+void mip_arp_parse(uint32_t raw_arp, struct mip_arp_msg *msg){
+    uint32_t arp = ntohl(raw_arp);
+
+    msg->type = (arp >> 31) & 0x01;
+    msg->address = (arp >> 23) & 0xFF;
+};
+
+int send_mip_arp_request(struct ifs_data *ifs, uint8_t local_mip, uint8_t target_mip){
+    struct mip_arp_msg arp_msg;
+    struct mip_hdr mip_hdr;
+
+    uint32_t arp_sdu;
+    uint8_t mip_pdu[512];
+
+    uint8_t broadcast_mac[] = ETH_BROADCAST;
+
+    ssize_t mip_len;
+    
+    arp_msg.type = MIP_ARP_REQUEST;
+    arp_msg.address = target_mip;
+
+    arp_sdu = mip_arp_serialize(&arp_msg);
+
+    mip_hdr.dst = MIP_BROADCAST;
+    mip_hdr.src = local_mip;
+    mip_hdr.ttl = 1;
+    mip_hdr.sdu_len = 0;
+    mip_hdr.sdu_type = MIP_TYPE_ARP;
+
+    mip_len = mip_build_pdu(&mip_hdr, (uint8_t *)&arp_sdu, sizeof(arp_sdu), mip_pdu, sizeof(mip_pdu));
+
+    if(mip_len == -1){
+        return -1;
+    }
+
+    for(int i = 0; i < ifs->ifn; i++){
+        if(send_raw_packet(ifs->rsock, &ifs->addr[i], broadcast_mac, mip_pdu, mip_len) == -1){
+            perror("send_raw_packet");
+            return -1;
+        }
+    }
+
+    return 0;
+};
+
+int handle_mip_arp_request(uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len){
+    struct mip_arp_msg arp_msg; 
+    uint32_t raw_arp;
+
+    if(mip_hdr->sdu_type != MIP_TYPE_ARP){
+        return 0;
+    }
+
+    if(sdu_len < sizeof(uint32_t)){
+        return 0;
+    }
+
+    memcpy(&raw_arp, sdu, sizeof(raw_arp));
+
+    mip_arp_parse(raw_arp, &arp_msg);
+
+    if(arp_msg.type != MIP_ARP_REQUEST){
+        return 0;
+    }
+
+    if(arp_msg.address != local_mip){
+        return 0;
+    }
+
+    return 1;
+};
+
+int send_mip_arp_response(struct ifs_data *ifs, int ifindex, const uint8_t *dst_mac, uint8_t local_mip, uint8_t requester_mip){
+    struct mip_arp_msg arp_msg;
+    struct mip_hdr mip_hdr;
+
+    uint32_t arp_sdu;
+    uint8_t mip_pdu[512];
+
+    ssize_t mip_len;
+
+    arp_msg.type = MIP_ARP_RESPONSE;
+    arp_msg.address = local_mip;
+
+    arp_sdu = mip_arp_serialize(&arp_msg);
+
+    mip_hdr.dst = requester_mip;
+    mip_hdr.src = local_mip;
+    mip_hdr.ttl = 1;
+    mip_hdr.sdu_len = 0;
+    mip_hdr.sdu_type = MIP_TYPE_ARP;
+
+    mip_len = mip_build_pdu(&mip_hdr, (uint8_t *)&arp_sdu, sizeof(arp_sdu), mip_pdu, sizeof(mip_pdu));
+    if(mip_len == -1){
+        return -1;
+    }
+
+    for(int i = 0; i < ifs->ifn; i++){
+
+        if(ifs->addr[i].sll_ifindex == ifindex){
+            return send_raw_packet(ifs->rsock, &ifs->addr[i], (uint8_t *)dst_mac, mip_pdu, mip_len);
+        }
+    }
+
+    return -1;
+};
+
+int handle_mip_arp(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len, const uint8_t *src_mac, int ifindex){
+    struct mip_arp_msg arp_msg;
+    uint32_t raw_arp;
+
+    if(mip_hdr->sdu_type != MIP_TYPE_ARP){
+        return 0;
+    }
+
+    if(sdu_len < sizeof(uint32_t)){
+        return -1;
+    }
+
+    memcpy(&raw_arp, sdu, sizeof(raw_arp));
+    mip_arp_parse(raw_arp, &arp_msg);
+
+    mip_arp_update(cache, mip_hdr->src, src_mac, ifindex);
+
+    if(arp_msg.type == MIP_ARP_REQUEST){
+        if(arp_msg.address == local_mip){
+            return send_mip_arp_response(ifs, ifindex, src_mac, local_mip, mip_hdr->src);
+        }
+
+        return 0;
+    }
+
+    if(arp_msg.type == MIP_ARP_RESPONSE){
+        return 0;
+    }
+    return -1;
+
+};
+
+
+struct mip_arp_entry *resolve_mip(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, uint8_t dst_mip){
+    struct mip_arp_entry *entry;
+
+    entry = mip_arp_lookup(cache, dst_mip);
+
+    if(entry != NULL){
+        return entry;
+    }
+
+    if(send_mip_arp_request(ifs, local_mip, dst_mip) == -1){
+        return NULL;
+    }
+
+    return NULL;
+    
+};
+
+
