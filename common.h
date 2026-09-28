@@ -14,6 +14,10 @@
 #define ETH_P_MIP 0x88B5
 #define MIP_HDR_LEN 4
 
+#define MIP_TYPE_ARP  0x01
+#define MIP_TYPE_PING 0x02
+#define MIP_BROADCAST 0xFF
+
 #include <linux/if_packet.h>
 #include <stdint.h>
 
@@ -41,20 +45,19 @@ struct ether_frame{
     uint8_t contents[0];
 }__attribute__((packed));
 
-struct mip_packet {
-    uint8_t src;
+/*MIP header fields used internally before/after serialization.*/
+struct mip_hdr {
     uint8_t dst;
-    uint8_t type;
+    uint8_t src;
     uint8_t ttl;
-
-    uint8_t *sdu;
-    size_t sdu_len;
-}
+    uint16_t sdu_len;
+    uint8_t sdu_type;
+};
 
 /*Discover Discover available Ethernet interfaces and their link-layer addresses. */
 void get_mac_from_interfaces(struct ifs_data *ifs);
 
-/* Intiialize itnerface data and associate it with the raw socket.*/
+/* Intiialize interface data and associate it with the raw socket.*/
 void init_ifs(struct ifs_data *ifs, int raw_sock);
 
 /*Print a MAC address in human-readable form.*/
@@ -66,7 +69,23 @@ int send_raw_packet(int sd, struct sockaddr_ll *so_name, uint8_t *dst_addr, uint
 /*Receives Ethernet frame and seperates its header from the payload so MIPD can inspect and process the packet further.*/
 int recv_raw_packet(int sd, struct sockaddr_ll *so_name, struct ether_frame *frame_hdr, uint8_t *buf, size_t len);
 
-size_t build_mip_header(uint8_t *buf, uint8_t src, uint8_t dst);
+/*Pack the MIP header fields into a 32-bit header. */
+uint32_t mip_seralize_header(const struct mip_hdr *hdr);
+
+/*Unpack a 32-bit MIP header into it's seperate fields.*/
+void mip_parse_header(uint32_t raw_header, struct mip_hdr *hdr);
+
+/*build a MIP PDU header into its seperate fields. */
+size_t mip_build_pdu(struct mip_hdr *hdr, const uint8_t *sdu, size_t sdu_len, uint8_t *buf, size_t buf_len);
+
+/*Round the SDU size up to a multiple of 4 bytes. */
+size_t mip_padded_sdu_len(size_t len);
+
+/*Convert padded SDU bytes into 32 bit words*/
+uint16_t mip_sdu_words(size_t padded_len);
+
+/*Parse a MIP PDU and retrive its header and sdu. */
+int mip_parse_pdu(uint8_t *buf, size_t buf_len, struct mip_hdr *hdr, uint8_t **sdu, size_t *sdu_len);
 
 /*End of guard*/
 #endif
