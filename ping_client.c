@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <sys/time.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -43,6 +45,9 @@ static int connect_to_mipd(const char *socket_path){
 int main(int argc, char *argv[]){
     int sd;
     struct mip_app_msg msg;
+    struct timespec start;
+    struct timespec end;
+    double rtt_ms;
 
     /*Input handling: 
     * Input has to have 4 argument counts before it's valid:
@@ -62,16 +67,16 @@ int main(int argc, char *argv[]){
     if(sd == -1){
         return EXIT_FAILURE;
     }
-    printf("Connected to mipd\n");
-
+    
     /*Temporary test to verify if UNIX socket can communicate with MIPD. */
     /*Adding msg.dst_mip as argv[2]. Converting text string to integer using atoi. */
     msg.dst_mip = (unsigned char)atoi(argv[2]);
-    
+
     /*Adding the message on argv[3] into msg. */
-    strncpy(msg.message, argv[3], sizeof(msg.message) -1);
-    msg.message[sizeof(msg.message) -1] = '\0';
-    
+    snprintf(msg.message, sizof(msg.message), "PING:%s", argv[3]);
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     /*send destination MIP - message to local MIPD over UNIX socket.*/
     if(send(sd, &msg, sizeof(msg), 0) == -1){
         perror("send");
@@ -79,10 +84,42 @@ int main(int argc, char *argv[]){
         return EXIT_FAILURE;
     }
 
-    printf("Sent message to MIP %u: %s\n", msg.dst_mip, msg.message);
+    struct timeval timeout;
 
-    
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
 
+    if (setsockopt(sd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == -1) {
+        perror("setsockopt");
+        close(sd);
+        return EXIT_FAILURE;
+    }
+
+    ssize_t bytes = recv(sd, &reply, sizeof(reply), 0);
+    if (bytes == -1) {
+        if(errno = EAGAIN || errno == EWOULDBLOCK){
+            printf("timeout\n");
+            close(sd);
+            return EXIT_SUCCESS;
+        }
+
+        perror("recv");
+        close(sd);
+        return EXIT_FAILURE;
+    }
+
+    if (bytes == 0) {
+        close(sd);
+        return EXIT_FAILURE;
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    rtt_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
+
+    printf("Received from MIP %u: %s\n", reply.dst_mip, reply.message);
+
+    printf("RTT: %.3f ms\n", rtt_ms);
     close(sd);
 
     return EXIT_SUCCESS;
