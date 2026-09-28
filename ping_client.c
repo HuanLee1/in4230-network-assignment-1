@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
+#include <errno.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -58,7 +59,7 @@ int main(int argc, char *argv[]){
     * Else it'll print out standard error and how to use ping_client.
     */
     if(argc < 4){
-        fprintf(stderr, "Usage: %s <socket_path> <destination_mip> <message>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <socket_path> <message> <destination_mip>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -70,10 +71,10 @@ int main(int argc, char *argv[]){
     
     /*Temporary test to verify if UNIX socket can communicate with MIPD. */
     /*Adding msg.dst_mip as argv[2]. Converting text string to integer using atoi. */
-    msg.dst_mip = (unsigned char)atoi(argv[2]);
+    msg.dst_mip = (unsigned char)atoi(argv[3]);
 
     /*Adding the message on argv[3] into msg. */
-    snprintf(msg.message, sizof(msg.message), "PING:%s", argv[3]);
+    snprintf(msg.message, sizeof(msg.message), "PING:%s", argv[2]);
 
     clock_gettime(CLOCK_MONOTONIC, &start);
 
@@ -94,15 +95,15 @@ int main(int argc, char *argv[]){
         close(sd);
         return EXIT_FAILURE;
     }
-
+    
+    struct mip_app_msg reply;
     ssize_t bytes = recv(sd, &reply, sizeof(reply), 0);
     if (bytes == -1) {
-        if(errno = EAGAIN || errno == EWOULDBLOCK){
-            printf("timeout\n");
+        if(errno == EAGAIN || errno == EWOULDBLOCK){
+            printf("Ping timeout\n");
             close(sd);
             return EXIT_SUCCESS;
         }
-
         perror("recv");
         close(sd);
         return EXIT_FAILURE;
@@ -114,13 +115,10 @@ int main(int argc, char *argv[]){
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
-
     rtt_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
-
     printf("Received from MIP %u: %s\n", reply.dst_mip, reply.message);
-
     printf("RTT: %.3f ms\n", rtt_ms);
+    
     close(sd);
-
     return EXIT_SUCCESS;
 }

@@ -72,13 +72,13 @@ int main(int argc, char *argv[]){
         reply.dst_mip = msg.dst_mip;
 
         const char *prefix = "PING:";
-        const char *received = msg.messages;
+        const char *received = msg.message;
 
-        if(strncmp(receivd, prefix, strlen(prefix)) == 0){
+        if(strncmp(received, prefix, strlen(prefix)) == 0){
             received += strlen(prefix);
         }
 
-        snprintf(reply.message, sizeof(reply.message), "PONG:%s", received);
+        snprintf(reply.message, sizeof(reply.message), "PONG:%.250s", received);
         if(send(sd, &reply, sizeof(reply), 0) == -1){
             perror("send");
             close(sd);

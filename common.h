@@ -12,7 +12,6 @@
 #define MAX_CONNS 5
 #define MAX_IFACES 10
 #define ETH_P_MIP 0x88B5
-#define MIP_HDR_LEN 4
 
 #define MIP_TYPE_ARP  0x01
 #define MIP_TYPE_PING 0x02
@@ -26,6 +25,7 @@
 
 #include <linux/if_packet.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 
 /* Message format used between local application and the MIPD over the UNIX socket. */
@@ -105,7 +105,7 @@ uint32_t mip_serialize_header(const struct mip_hdr *hdr);
 void mip_parse_header(uint32_t raw_header, struct mip_hdr *hdr);
 
 /*build a MIP PDU header into its seperate fields. */
-size_t mip_build_pdu(struct mip_hdr *hdr, const uint8_t *sdu, size_t sdu_len, uint8_t *buf, size_t buf_len);
+ssize_t mip_build_pdu(struct mip_hdr *hdr, const uint8_t *sdu, size_t sdu_len, uint8_t *buf, size_t buf_len);
 
 /*Round the SDU size up to a multiple of 4 bytes. */
 size_t mip_padded_sdu_len(size_t len);
@@ -128,13 +128,10 @@ void mip_arp_parse(uint32_t raw_arp, struct mip_arp_msg *msg);
 
 int send_mip_arp_request(struct ifs_data *ifs, uint8_t local_mip, uint8_t target_mip);
 
-int handle_mip_arp_request(uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len);
 
 int send_mip_arp_response(struct ifs_data *ifs, int ifindex, const uint8_t *dst_mac, uint8_t local_mip, uint8_t requester_mip);
 
 int handle_mip_arp(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len, const uint8_t *src_mac, int ifindex);
-
-struct mip_arp_entry *resolve_mip(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, uint8_t dst_mip);
 
 int send_ping_via_entry(struct ifs_data *ifs, int raw_sock, uint8_t local_mip, const struct mip_app_msg *msg, const struct mip_arp_entry *entry);
 

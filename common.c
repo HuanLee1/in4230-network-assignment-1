@@ -31,6 +31,10 @@ void get_mac_from_interfaces(struct ifs_data *ifs){
         if(ifp->ifa_addr != NULL &&
         ifp->ifa_addr->sa_family == AF_PACKET &&
         strcmp("lo", ifp->ifa_name) != 0){
+            if(i >= MAX_IFACES){
+                break;
+            }
+
             /*Save the interface info so we can use the MAC and ifindex when sending Ethernet frames.*/
             memcpy(&ifs->addr[i], (struct sockaddr_ll *)ifp->ifa_addr, sizeof(struct sockaddr_ll));
             i++;
@@ -175,7 +179,7 @@ void mip_parse_header(uint32_t raw_header, struct mip_hdr *hdr){
 /*Builds a MIP PDU by serializing the header and appending the padded SDU. 
 * The finished PDU can be passed to the Ethernet layer for sending.
 ----------------------------------------------------------------------*/
-size_t mip_build_pdu(struct mip_hdr *hdr, const uint8_t *sdu, size_t sdu_len, uint8_t *buf, size_t buf_len){
+ssize_t mip_build_pdu(struct mip_hdr *hdr, const uint8_t *sdu, size_t sdu_len, uint8_t *buf, size_t buf_len){
     uint32_t raw_header;
     size_t padded_len;
 
@@ -348,32 +352,7 @@ int send_mip_arp_request(struct ifs_data *ifs, uint8_t local_mip, uint8_t target
     return 0;
 }
 
-int handle_mip_arp_request(uint8_t local_mip, const struct mip_hdr *mip_hdr, const uint8_t *sdu, size_t sdu_len){
-    struct mip_arp_msg arp_msg; 
-    uint32_t raw_arp;
-
-    if(mip_hdr->sdu_type != MIP_TYPE_ARP){
-        return 0;
-    }
-
-    if(sdu_len < sizeof(uint32_t)){
-        return 0;
-    }
-
-    memcpy(&raw_arp, sdu, sizeof(raw_arp));
-
-    mip_arp_parse(raw_arp, &arp_msg);
-
-    if(arp_msg.type != MIP_ARP_REQUEST){
-        return 0;
-    }
-
-    if(arp_msg.address != local_mip){
-        return 0;
-    }
-
-    return 1;
-}
+ 
 
 int send_mip_arp_response(struct ifs_data *ifs, int ifindex, const uint8_t *dst_mac, uint8_t local_mip, uint8_t requester_mip){
     struct mip_arp_msg arp_msg;
@@ -403,7 +382,7 @@ int send_mip_arp_response(struct ifs_data *ifs, int ifindex, const uint8_t *dst_
     for(int i = 0; i < ifs->ifn; i++){
 
         if(ifs->addr[i].sll_ifindex == ifindex){
-            return send_raw_packet(ifs->rsock, &ifs->addr[i], (uint8_t *)dst_mac, mip_pdu, mip_len);
+            return send_raw_packet(ifs->rsock, &ifs->addr[i], dst_mac, mip_pdu, mip_len);
         }
     }
 
@@ -443,23 +422,6 @@ int handle_mip_arp(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t lo
 }
 
 
-struct mip_arp_entry *resolve_mip(struct mip_arp_cache *cache, struct ifs_data *ifs, uint8_t local_mip, uint8_t dst_mip){
-    struct mip_arp_entry *entry;
-
-    entry = mip_arp_lookup(cache, dst_mip);
-
-    if(entry != NULL){
-        return entry;
-    }
-
-    if(send_mip_arp_request(ifs, local_mip, dst_mip) == -1){
-        return NULL;
-    }
-
-    return NULL;
-    
-}
-
 int send_ping_via_entry(
     struct ifs_data *ifs, int raw_sock, uint8_t local_mip, const struct mip_app_msg *msg, const struct mip_arp_entry *entry){
     struct mip_hdr mip_hdr;
@@ -472,13 +434,7 @@ int send_ping_via_entry(
     mip_hdr.sdu_len = 0;
     mip_hdr.sdu_type = MIP_TYPE_PING;
 
-    mip_len = mip_build_pdu(
-        &mip_hdr,
-        (uint8_t *)msg->message,
-        strlen(msg->message) + 1,
-        mip_pdu,
-        sizeof(mip_pdu)
-    );
+    mip_len = mip_build_pdu(&mip_hdr, (const uint8_t *)msg->message, strlen(msg->message) + 1, mip_pdu, sizeof(mip_pdu));
 
     if (mip_len == -1) {
         return -1;
@@ -488,13 +444,7 @@ int send_ping_via_entry(
 
         if (ifs->addr[i].sll_ifindex == entry->ifindex) {
 
-            return send_raw_packet(
-                raw_sock,
-                &ifs->addr[i],
-                entry->mac_addr,
-                mip_pdu,
-                mip_len
-            );
+            return send_raw_packet(raw_sock, &ifs->addr[i], entry->mac_addr, mip_pdu, mip_len);
         }
     }
 

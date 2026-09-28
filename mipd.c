@@ -7,7 +7,6 @@
 #include <sys/epoll.h>
 #include <sys/un.h>
 #include <linux/if_packet.h>
-#include <net/ethernet.h>
 #include <arpa/inet.h>
 
 #include "common.h"
@@ -37,9 +36,12 @@ static int prepare_server_sock(const char *socket_path){
     /* Clearing &addr to avoid old bytes of data. */
     memset(&addr, 0, sizeof(addr));
 
-    /*Set socket family to UNIX domain,
-    * and copying socket_path int othe address structure.
-    * Unlinking to remove old "leftover" data from socket/file. */
+    if(strlen(socket_path) >= sizeof(addr.sun_path)){
+        fprintf(stderr, "Socket path too long\n");
+        close(sd);
+        return -1;
+    }
+
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) -1);
     unlink(socket_path);
@@ -63,6 +65,7 @@ static int prepare_server_sock(const char *socket_path){
     if(rc == -1){
         perror("listen");
         close(sd);
+        unlink(socket_path);
         return -1;
     }
 
@@ -79,58 +82,77 @@ int main(int argc, char *argv[]){
     int raw_sock;
     int epoll_fd;
     int upper_sd = -1;
+    int debug = 0;
+
     uint8_t local_mip;
+
+    const char *socket_path;
+    const char *mip_arg;
+
     struct mip_arp_cache arp_cache;
-    struct mip_app_msg msg;
     struct epoll_event events[MAX_EVENTS];
     struct ifs_data ifs;
     struct pending_msg pending;    
-    unsigned short protocol = ETH_P_MIP;
 
-    /*Input check before MIPD start. 
-    * Example:
-    * ./mipd -> argc = 1. (invalid prints out standard error anx exists)
-    * ./mipd /tmp/mip_socket -> argc = 2. (valid, continue) */
-    if(argc < 3){
-        fprintf(stderr, "Usage: %s <socket_path> <mip_address>\n", argv[0]);
+    const unsigned short protocol = ETH_P_MIP;
+
+    if(argc == 4 && strcmp(argv[1], "-d") == 0){
+        debug = 1;
+        socket_path = argv[2];
+        mip_arg = argv[3];
+    }
+    else if(argc == 3){
+        socket_path = argv[1];
+        mip_arg = argv[2];
+    }
+    else {
+        fprintf(stderr, "Usage: %s [-d] <socket_path> <mip_address>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    local_mip = (uint8_t)atoi(argv[2]);
+    char *endptr;
+    long mip_value = strtol(mip_arg, &endptr, 10);
+
+    if(endptr == mip_arg || *endptr != '\0' || mip_value < 0 || mip_value >= MIP_BROADCAST){
+        fprintf(stderr, "Invalid MIP address. %s\n", mip_arg);
+        return EXIT_FAILURE;
+    }
+
+    local_mip = (uint8_t)mip_value;
+
+
+
 
     mip_arp_cache_init(&arp_cache);
     memset(&pending, 0, sizeof(pending));
 
-    /*Creates UNIX server socket using path provided & error handling.*/
-    server_sd = prepare_server_sock(argv[1]);
+    server_sd = prepare_server_sock(socket_path);
     if(server_sd == -1){ 
         return EXIT_FAILURE;
     }
     
-    /*Create a raw AF_PACKET socket so mipd can send and receive ethernet frames directly on the local network interface.*/
     raw_sock = socket(AF_PACKET, SOCK_RAW, htons(protocol));
     if(raw_sock == -1){
         perror("socket raw");
         close(server_sd);
-        unlink(argv[1]);
+        unlink(socket_path);
         return EXIT_FAILURE;
     }
 
-      /* Server is now listening for a local application connection. */
-    printf("mipd listening on UNIX socket: %s\n", argv[1]);
-    
-
-    /*Discxover ethernet interfaces and store information such as MAC addresses and interfaces.*/
     init_ifs(&ifs, raw_sock);
 
-    /*Print discovered interfaces to verify that interfaces setup succeeded.*/
-    printf("Found %d network interfaces(s)\n", ifs.ifn);
+    if(debug){
+        printf("mipd listening on UNIX socket: %s\n", socket_path);
+        
+        printf("Found %d network interfaces(s)\n", ifs.ifn);
 
-    for(int i = 0; i<ifs.ifn; i++){
-        printf("Interface %d - ifindex: %d - MAC: ", i, ifs.addr[i].sll_ifindex);
-        print_mac_addr(ifs.addr[i].sll_addr);
-        printf("\n");
+        for(int i = 0; i<ifs.ifn; i++){
+            printf("Interface %d - ifindex: %d - MAC: ", i, ifs.addr[i].sll_ifindex);
+            print_mac_addr(ifs.addr[i].sll_addr);
+            printf("\n");
+        }
     }
+    
 
   
 
@@ -143,8 +165,9 @@ int main(int argc, char *argv[]){
     epoll_fd = epoll_create1(0);
     if(epoll_fd == -1){
         perror("epoll_create1");
+        close(raw_sock);
         close(server_sd);
-        unlink(argv[1]);
+        unlink(socket_path);
         return EXIT_FAILURE;
     }
 
@@ -169,9 +192,10 @@ int main(int argc, char *argv[]){
     */
     if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_sd, &unix_event) == -1){
         perror("epoll_ctl unix_sock");
+        close(raw_sock);
         close(epoll_fd);
         close(server_sd);
-        unlink(argv[1]);
+        unlink(socket_path);
         return EXIT_FAILURE;
     }
 
@@ -186,7 +210,7 @@ int main(int argc, char *argv[]){
         close(raw_sock);
         close(epoll_fd);
         close(server_sd);
-        unlink(argv[1]);
+        unlink(socket_path);
         return EXIT_FAILURE;
     }
 
@@ -240,7 +264,9 @@ int main(int argc, char *argv[]){
                     continue;
                 }
                 
-                printf("Upper-layer application connected\n");
+                if(debug){
+                    printf("Upper-layer application connected\n");
+                }
             } 
             /*Receive Ethernet frame from raw socket.*/
             else if(fd == raw_sock){
@@ -253,20 +279,28 @@ int main(int argc, char *argv[]){
                     continue;
                 }
 
+                if(so_name.sll_pkttype == PACKET_OUTGOING){
+                    continue;
+                }
+
                 if(bytes < (ssize_t)sizeof(struct ether_frame)){
                     continue;
                 }
 
                 frame_hdr = (struct ether_frame *)buffer;
 
-                printf("Received Ethernet frame on ifindex %d\n", so_name.sll_ifindex);
-                printf("Source MAC: ");
-                print_mac_addr(frame_hdr->src_addr);
-                printf("\n");
+                if(debug){
+                    printf("Received Ethernet frame on ifindex %d\n", so_name.sll_ifindex);
+                
+                    printf("Source MAC: ");
+                    print_mac_addr(frame_hdr->src_addr);
+                    printf("\n");
 
-                printf("Destination MAC: ");
-                print_mac_addr(frame_hdr->dst_addr);
-                printf("\n");
+                    printf("Destination MAC: ");
+                    print_mac_addr(frame_hdr->dst_addr);
+                    printf("\n");
+
+                }
 
                 uint8_t *mip_data;
                 mip_data = get_payload_from_frame(buffer);
@@ -276,8 +310,16 @@ int main(int argc, char *argv[]){
                 struct mip_hdr mip_hdr;
                 uint8_t *sdu;
                 size_t sdu_len;
-
+                
                 if(mip_parse_pdu(mip_data, mip_len, &mip_hdr, &sdu, &sdu_len) == -1){
+                    continue;
+                }
+
+                if(mip_hdr.dst != local_mip && mip_hdr.dst != MIP_BROADCAST){
+                    continue;
+                }
+
+                if(mip_hdr.ttl == 0){
                     continue;
                 }
 
@@ -321,7 +363,7 @@ int main(int argc, char *argv[]){
                 }
             }
             else {
-                /*Activity on another registered descriptor means an already connected application has sent data to MIPD. */
+                struct mip_app_msg msg;
                 ssize_t bytes = recv(fd, &msg, sizeof(msg), 0);
                 if(bytes == -1){
                     perror("recv");
@@ -340,9 +382,15 @@ int main(int argc, char *argv[]){
                     continue;
                 }
 
-                printf("Destinatiom MIP: %u\n", msg.dst_mip);
-                printf("Message: %s\n", msg.message);
+                if(bytes != (ssize_t)sizeof(msg)){
+                    continue;
+                }
 
+                if(debug){
+                    printf("Destination MIP: %u\n", msg.dst_mip);
+                    printf("Message: %s\n", msg.message);
+                }
+          
                 struct mip_arp_entry *entry;
                 
                 entry = mip_arp_lookup(&arp_cache, msg.dst_mip);
@@ -373,7 +421,7 @@ int main(int argc, char *argv[]){
     close(raw_sock);
     close(epoll_fd);
     close(server_sd);
-    unlink(argv[1]);
+    unlink(socket_path);
 
     return EXIT_SUCCESS;
 }
